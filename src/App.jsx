@@ -10,6 +10,8 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import { useAuth } from "./context/AuthContext";
 import { Navigate } from "react-router-dom";
+import "./index.css";
+
 
 export default function App() {
   function HomeRedirect() {

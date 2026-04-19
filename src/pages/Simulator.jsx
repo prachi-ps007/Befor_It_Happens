@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+// src/pages/Simulator.jsx
+
+import { useEffect, useRef, useState } from "react";
 import MineMap from "../components/MINEMAP";
 import AlertsFeed from "../components/AlertsFeed";
 import useSimulation from "../hooks/useSimulation";
@@ -7,304 +9,176 @@ import {
   getRiskLevel,
   getPrediction,
 } from "../utils/riskEngine";
+import {
+  saveSimulation,
+  saveAlert,
+  saveAction,
+} from "../services/firestore";
 
-/* ─── tiny helpers ─────────────────────────────────────────────────────────── */
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const fmt1   = (v) => Number(v).toFixed(1);
-const fmt2   = (v) => Number(v).toFixed(2);
+const fmt1  = (v) => Number(v).toFixed(1);
+const fmt2  = (v) => Number(v).toFixed(2);
 
-/* ─── colour map ───────────────────────────────────────────────────────────── */
+/* ── Underground palette ── */
+const AMBER  = "#C9872A";
+const AMBER2 = "#E8A83E";
+const RUST   = "#8B3A1A";
+const STONE  = "#1A1410";
+const COAL   = "#0D0B09";
+const SEAM   = "#2A1E10";
+const DUST   = "#3D2E1A";
+
 const RISK_THEME = {
-  safe:    { primary: "#4ade80", dim: "rgba(74,222,128,0.15)",  pulse: "rgba(74,222,128,0.6)",  label: "NOMINAL",   hex: "#4ade80" },
-  warning: { primary: "#facc15", dim: "rgba(250,204,21,0.15)",  pulse: "rgba(250,204,21,0.6)",  label: "CAUTION",   hex: "#facc15" },
-  danger:  { primary: "#f87171", dim: "rgba(248,113,113,0.18)", pulse: "rgba(248,113,113,0.7)", label: "DANGER",    hex: "#f87171" },
-  critical:{ primary: "#ff4040", dim: "rgba(255,64,64,0.22)",   pulse: "rgba(255,64,64,0.8)",   label: "CRITICAL",  hex: "#ff4040" },
+  safe:     { primary: "#6DBB7A", dim: "rgba(109,187,122,0.12)", label: "ALL CLEAR",  glyph: "◆" },
+  warning:  { primary: "#E8A83E", dim: "rgba(232,168,62,0.14)",  label: "CAUTION",    glyph: "▲" },
+  danger:   { primary: "#D95F3B", dim: "rgba(217,95,59,0.16)",   label: "DANGER",     glyph: "⬟" },
+  critical: { primary: "#C0392B", dim: "rgba(192,57,43,0.20)",   label: "CRITICAL",   glyph: "⬛" },
 };
 const theme = (level) => RISK_THEME[level] || RISK_THEME.safe;
 
-/* ─── VU-meter bar ─────────────────────────────────────────────────────────── */
-function VuBar({ value, max, color, vertical = false, segments = 12 }) {
-  const pct   = clamp(value / max, 0, 1);
-  const filled = Math.round(pct * segments);
-  const bars  = Array.from({ length: segments }, (_, i) => {
-    const lit = i < filled;
-    const idx = i / segments;
-    const barColor = idx > 0.75 ? "#f87171" : idx > 0.5 ? "#facc15" : color;
-    return { lit, color: barColor };
+/* ── Gauge arc component ── */
+function GaugeArc({ value, max, color, label, unit, warn, danger }) {
+  const pct = Math.min(1, value / max);
+  const cx = 65, cy = 65, r = 52;
+  const startAngle = Math.PI * 0.75;   // 135° — bottom-left
+  const sweepAngle = Math.PI * 1.5;    // 270° sweep
+
+  const pt = (a) => ({
+    x: cx + r * Math.cos(a),
+    y: cy + r * Math.sin(a),
   });
 
-  if (vertical) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column-reverse", gap: "2px", height: "100%", width: "12px" }}>
-        {bars.map((b, i) => (
-          <div key={i} style={{
-            flex: 1, borderRadius: "1px",
-            background: b.lit ? b.color : "rgba(255,255,255,0.06)",
-            boxShadow: b.lit ? `0 0 4px ${b.color}88` : "none",
-            transition: "background 0.1s",
-          }} />
-        ))}
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", gap: "2px", width: "100%", height: "10px" }}>
-      {bars.map((b, i) => (
-        <div key={i} style={{
-          flex: 1, borderRadius: "1px",
-          background: b.lit ? b.color : "rgba(255,255,255,0.06)",
-          boxShadow: b.lit ? `0 0 4px ${b.color}88` : "none",
-          transition: "background 0.1s",
-        }} />
-      ))}
-    </div>
-  );
-}
+  const start    = pt(startAngle);
+  const trackEnd = pt(startAngle + sweepAngle);
+  const arcEnd   = pt(startAngle + sweepAngle * pct);
 
-/* ─── Dial gauge (SVG arc) ─────────────────────────────────────────────────── */
-function DialGauge({ value, max, label, unit, color, size = 90 }) {
-  const pct   = clamp(value / max, 0, 1);
-  const r     = (size - 12) / 2;
-  const cx    = size / 2;
-  const cy    = size / 2;
-  const start = Math.PI * 0.75;
-  const sweep = Math.PI * 1.5;
-  const angle = start + sweep * pct;
-  const arcX  = (a) => cx + r * Math.cos(a);
-  const arcY  = (a) => cy + r * Math.sin(a);
+  const largeArc   = sweepAngle * pct > Math.PI ? 1 : 0;
+  const largeTrack = 1;
 
-  // background arc path
-  const bgD = [
-    `M ${arcX(start)} ${arcY(start)}`,
-    `A ${r} ${r} 0 1 1 ${arcX(start + sweep - 0.001)} ${arcY(start + sweep - 0.001)}`,
-  ].join(" ");
-
-  // filled arc path
-  const fgD = pct < 0.01 ? "" : [
-    `M ${arcX(start)} ${arcY(start)}`,
-    `A ${r} ${r} 0 ${sweep * pct > Math.PI ? 1 : 0} 1 ${arcX(angle)} ${arcY(angle)}`,
-  ].join(" ");
-
-  // needle tip
-  const nLen = r - 4;
-  const nx   = cx + nLen * Math.cos(angle);
-  const ny   = cy + nLen * Math.sin(angle);
+  const col =
+    value >= danger
+      ? RISK_THEME.danger.primary
+      : value >= warn
+      ? RISK_THEME.warning.primary
+      : color;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* tick marks */}
-        {Array.from({ length: 9 }, (_, i) => {
-          const ta = start + (sweep / 8) * i;
-          const r1 = r + 2, r2 = r - 4;
-          return (
-            <line key={i}
-              x1={cx + r1 * Math.cos(ta)} y1={cy + r1 * Math.sin(ta)}
-              x2={cx + r2 * Math.cos(ta)} y2={cy + r2 * Math.sin(ta)}
-              stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
-          );
-        })}
-        {/* bg arc */}
-        <path d={bgD} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="5" strokeLinecap="round" />
-        {/* fg arc */}
-        {fgD && <path d={fgD} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
-          style={{ filter: `drop-shadow(0 0 4px ${color}99)`, transition: "all 0.4s ease" }} />}
-        {/* needle */}
-        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth="1.5" strokeLinecap="round"
-          style={{ filter: `drop-shadow(0 0 3px ${color})`, transition: "all 0.4s ease" }} />
-        <circle cx={cx} cy={cy} r="3" fill={color} style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+    <div style={{
+      display: "flex", flexDirection: "column",
+      alignItems: "center", gap: 6, flex: 1,
+    }}>
+      <svg width="130" height="110" viewBox="0 0 130 110">
+        {/* track */}
+        <path
+          d={`M${start.x},${start.y} A${r},${r} 0 ${largeTrack},1 ${trackEnd.x},${trackEnd.y}`}
+          fill="none" stroke={SEAM} strokeWidth="8" strokeLinecap="round"
+        />
+        {/* value arc */}
+        {pct > 0 && (
+          <path
+            d={`M${start.x},${start.y} A${r},${r} 0 ${largeArc},1 ${arcEnd.x},${arcEnd.y}`}
+            fill="none" stroke={col} strokeWidth="8" strokeLinecap="round"
+            style={{ filter: `drop-shadow(0 0 5px ${col}88)` }}
+          />
+        )}
+        {/* needle tip */}
+        <circle
+          cx={arcEnd.x} cy={arcEnd.y} r="5.5" fill={col}
+          style={{ filter: `drop-shadow(0 0 6px ${col})` }}
+        />
         {/* value */}
-        <text x={cx} y={cy + 16} textAnchor="middle" fill={color}
-          fontSize="13" fontFamily="'Share Tech Mono', monospace" fontWeight="700">
-          {fmt1(value)}
+        <text
+          x={cx} y={cy + 10}
+          textAnchor="middle" fontSize="18" fill={col}
+          style={{ fontFamily: "'Share Tech Mono',monospace", fontWeight: "bold" }}
+        >
+          {fmt2(value)}
         </text>
-        <text x={cx} y={cy + 27} textAnchor="middle" fill="rgba(200,175,130,0.45)"
-          fontSize="7" fontFamily="'Share Tech Mono', monospace" letterSpacing="1">
+        <text
+          x={cx} y={cy + 26}
+          textAnchor="middle" fontSize="9" fill={`${AMBER}88`}
+          style={{ fontFamily: "'Share Tech Mono',monospace", letterSpacing: "0.1em" }}
+        >
           {unit}
         </text>
       </svg>
       <div style={{
-        fontSize: "9px", letterSpacing: "2px",
-        color: "rgba(155,118,52,0.6)", fontFamily: "'Share Tech Mono', monospace",
-      }}>{label}</div>
-    </div>
-  );
-}
-
-/* ─── Oscilloscope-style waveform ──────────────────────────────────────────── */
-function Waveform({ history, color, height = 48, label }) {
-  const W = 220, H = height;
-  const pts = history.slice(-40);
-  if (pts.length < 2) return null;
-  const mn  = Math.min(...pts);
-  const mx  = Math.max(...pts) || mn + 1;
-  const toX = (i) => (i / (pts.length - 1)) * W;
-  const toY = (v) => H - ((v - mn) / (mx - mn)) * (H - 8) - 4;
-  const d   = pts.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
-
-  return (
-    <div style={{ position: "relative" }}>
-      <div style={{ fontSize: "8px", letterSpacing: "2px", color: "rgba(155,118,52,0.5)", marginBottom: "4px",
-        fontFamily: "'Share Tech Mono', monospace" }}>{label}</div>
-      <svg width={W} height={H} style={{ display: "block" }}>
-        {/* grid lines */}
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1="0" y1={H * f} x2={W} y2={H * f}
-            stroke="rgba(255,255,255,0.04)" strokeWidth="0.5" strokeDasharray="4 6" />
-        ))}
-        {/* fill */}
-        <path d={`${d} L${W},${H} L0,${H} Z`} fill={`${color}12`} />
-        {/* line */}
-        <path d={d} fill="none" stroke={color} strokeWidth="1.5"
-          style={{ filter: `drop-shadow(0 0 3px ${color}88)` }} />
-        {/* current dot */}
-        <circle cx={toX(pts.length - 1)} cy={toY(pts[pts.length - 1])} r="3"
-          fill={color} style={{ filter: `drop-shadow(0 0 5px ${color})` }}>
-          <animate attributeName="r" values="2.5;4;2.5" dur="1s" repeatCount="indefinite" />
-        </circle>
-      </svg>
-    </div>
-  );
-}
-
-/* ─── Risk score ring ──────────────────────────────────────────────────────── */
-function RiskRing({ score, level }) {
-  const t   = theme(level);
-  const pct = clamp(score / 100, 0, 1);
-  const R   = 54, size = 130, cx = size / 2, cy = size / 2;
-  const circ = 2 * Math.PI * R;
-  const dash = pct * circ * 0.72;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* decorative outer ring */}
-        <circle cx={cx} cy={cy} r={R + 10} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="0.5" strokeDasharray="3 5" />
-        {/* bg track */}
-        <circle cx={cx} cy={cy} r={R} fill="none"
-          stroke="rgba(255,255,255,0.07)" strokeWidth="8"
-          strokeDasharray={`${circ * 0.72} ${circ * 0.28}`}
-          strokeDashoffset={circ * 0.14}
-          strokeLinecap="round" transform={`rotate(126 ${cx} ${cy})`} />
-        {/* value arc */}
-        <circle cx={cx} cy={cy} r={R} fill="none"
-          stroke={t.primary} strokeWidth="8"
-          strokeDasharray={`${dash} ${circ - dash}`}
-          strokeDashoffset={circ * 0.14}
-          strokeLinecap="round"
-          transform={`rotate(126 ${cx} ${cy})`}
-          style={{ filter: `drop-shadow(0 0 6px ${t.primary}99)`, transition: "stroke-dasharray 0.6s ease, stroke 0.4s ease" }} />
-        {/* inner text */}
-        <text x={cx} y={cy - 8} textAnchor="middle" fill={t.primary}
-          fontSize="26" fontFamily="'Share Tech Mono', monospace" fontWeight="700">
-          {score}
-        </text>
-        <text x={cx} y={cy + 8} textAnchor="middle" fill="rgba(200,175,130,0.5)"
-          fontSize="8" fontFamily="'Share Tech Mono', monospace" letterSpacing="2">
-          RISK INDEX
-        </text>
-        <text x={cx} y={cy + 24} textAnchor="middle" fill={t.primary}
-          fontSize="10" fontFamily="'Share Tech Mono', monospace" letterSpacing="3" fontWeight="700">
-          {t.label}
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-/* ─── Prediction countdown strip ───────────────────────────────────────────── */
-function PredictionStrip({ prediction, level }) {
-  const t = theme(level);
-  const hasCountdown = prediction.timeToDanger != null;
-  return (
-    <div style={{
-      background: t.dim,
-      border: `1px solid ${t.primary}44`,
-      borderLeft: `3px solid ${t.primary}`,
-      borderRadius: "3px",
-      padding: "10px 14px",
-      position: "relative",
-      overflow: "hidden",
-    }}>
-      {/* shimmer */}
-      <div style={{
-        position: "absolute", top: 0, bottom: 0, width: "80px",
-        background: `linear-gradient(90deg, transparent, ${t.primary}0a, transparent)`,
-        animation: "shimmer 4s ease-in-out infinite",
-        pointerEvents: "none",
-      }} />
-      <div style={{ fontSize: "8px", letterSpacing: "3px", color: "rgba(155,118,52,0.55)",
-        fontFamily: "'Share Tech Mono', monospace", marginBottom: "4px" }}>
-        ◈ PREDICTIVE ENGINE
+        fontSize: 9, letterSpacing: "0.25em",
+        color: `${AMBER}66`,
+        fontFamily: "'Share Tech Mono',monospace",
+      }}>
+        {label}
       </div>
-      <div style={{ fontSize: "13px", color: "rgba(218,195,160,0.9)",
-        fontFamily: "'Barlow Condensed', sans-serif", lineHeight: 1.3 }}>
-        {prediction.message}
-      </div>
-      {hasCountdown && (
-        <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "9px", color: "rgba(155,118,52,0.5)", letterSpacing: "2px",
-            fontFamily: "'Share Tech Mono', monospace" }}>ETA CRITICAL</span>
-          <span style={{ fontSize: "20px", fontFamily: "'Share Tech Mono', monospace",
-            fontWeight: 700, color: t.primary,
-            animation: level === "danger" ? "flashText 0.9s ease-in-out infinite" : "none" }}>
-            {prediction.timeToDanger}s
-          </span>
-        </div>
-      )}
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   MAIN SIMULATOR
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* ── Strata crack line ── */
+const StrataLine = ({ y, opacity = 0.6 }) => (
+  <div style={{
+    position: "absolute", left: 0, right: 0, top: y, height: 1,
+    background: `linear-gradient(90deg,transparent,${SEAM},${DUST},${SEAM},transparent)`,
+    opacity, pointerEvents: "none",
+  }} />
+);
+
+/* ── Rock texture overlay ── */
+const RockOverlay = () => (
+  <div style={{
+    position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1,
+    backgroundImage: `
+      repeating-linear-gradient(167deg, transparent, transparent 42px, rgba(42,30,16,0.15) 42px, rgba(42,30,16,0.15) 43px),
+      repeating-linear-gradient(12deg,  transparent, transparent 68px, rgba(26,20,16,0.10) 68px, rgba(26,20,16,0.10) 69px),
+      repeating-linear-gradient(90deg,  transparent, transparent 120px,rgba(13,11,9,0.06) 120px,rgba(13,11,9,0.06)121px)
+    `,
+  }} />
+);
+
 export default function Simulator() {
   const { data, trend } = useSimulation();
-
-  const [zones,  setZones]  = useState({ A: "safe", B: "safe", C: "safe" });
+  const [zones, setZones]   = useState({ A: "safe", B: "safe", C: "safe" });
   const [alerts, setAlerts] = useState([]);
-  const [clock,  setClock]  = useState("");
-  const [metHistory, setMetHistory] = useState({ methane: [], oxygen: [], temperature: [] });
+  const [clock, setClock]   = useState("");
+  const prevRef = useRef(zones);
 
-  /* clock */
   useEffect(() => {
     const t = setInterval(() => {
       const n = new Date();
-      setClock([n.getHours(), n.getMinutes(), n.getSeconds()]
-        .map((v) => String(v).padStart(2, "0")).join(":"));
+      setClock(
+        [n.getHours(), n.getMinutes(), n.getSeconds()]
+          .map((v) => String(v).padStart(2, "0"))
+          .join(":")
+      );
     }, 1000);
     return () => clearInterval(t);
   }, []);
 
-  /* history ring-buffer (last 60 ticks) */
-  useEffect(() => {
-    setMetHistory((prev) => ({
-      methane:     [...prev.methane.slice(-59),     data.methane],
-      oxygen:      [...prev.oxygen.slice(-59),      data.oxygen],
-      temperature: [...prev.temperature.slice(-59), data.temperature],
-    }));
-  }, [data]);
-
-  /* risk engine */
   const score      = calculateRiskScore(data);
   const level      = getRiskLevel(score);
   const prediction = getPrediction({ data, trend });
   const t          = theme(level);
 
-  /* zone update */
-  useEffect(() => {
-    setZones({ A: level, B: level, C: level });
-  }, [level]);
+  useEffect(() => { setZones({ A: level, B: level, C: level }); }, [level]);
 
-  /* alert on zone change */
-  const prevRef = useRef(zones);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      saveSimulation({
+        methane: data.methane,
+        oxygen: data.oxygen,
+        temperature: data.temperature,
+        riskScore: score,
+        riskLevel: level,
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [data, score, level]);
+
   useEffect(() => {
     const prev = prevRef.current;
     Object.entries(zones).forEach(([zone, risk]) => {
       if (prev[zone] !== risk) {
-        if (risk === "danger")  addAlert(`Zone ${zone} entered DANGER`,  "danger");
-        if (risk === "warning") addAlert(`Zone ${zone} warning level`,   "warning");
+        if (risk === "danger")  addAlert(`Zone ${zone} DANGER`, "danger");
+        if (risk === "warning") addAlert(`Zone ${zone} WARNING`, "warning");
       }
     });
     prevRef.current = zones;
@@ -312,457 +186,364 @@ export default function Simulator() {
 
   const addAlert = (message, severity) => {
     const id = Date.now();
-    setAlerts((prev) => [{ id, message, severity, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 5));
+    const alertObj = { message, severity, time: new Date().toLocaleTimeString() };
+    setAlerts((prev) => [{ id, ...alertObj }, ...prev].slice(0, 5));
     setTimeout(() => setAlerts((prev) => prev.filter((a) => a.id !== id)), 5000);
+    saveAlert(alertObj);
   };
 
-  /* ── render ─────────────────────────────────────────────────────────────── */
+  const handleAction = (actionName) => {
+    const action = { action: actionName, time: new Date().toLocaleTimeString(), riskLevel: level };
+    addAlert(`ACT: ${actionName}`, "warning");
+    saveAction(action);
+  };
+
+  const ACTIONS = ["VENTILATION", "EVAC ALARM", "LOCK SHAFT", "COMM LINK", "DEPLOY CREW", "FLUSH GAS"];
+
   return (
-    <>
+    <div style={{
+      minHeight: "100vh", background: COAL,
+      padding: "0", color: `${AMBER}cc`,
+      fontFamily: "'Share Tech Mono',monospace",
+      position: "relative", overflow: "hidden",
+    }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Teko:wght@300;400;500&display=swap');
 
-        .sim-root, .sim-root * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width:4px; background:${COAL}; }
+        ::-webkit-scrollbar-thumb { background:${SEAM}; }
 
-        .sim-root {
-          font-family: 'Barlow Condensed', sans-serif;
-          background: #080604;
-          height: 100vh;
-          width: 100%;
-          color: rgba(218,195,158,0.9);
-          position: relative;
-          overflow: hidden;
+        @keyframes lanternFlicker {
+          0%,100%{opacity:1} 8%{opacity:0.92} 20%{opacity:0.97} 45%{opacity:0.94} 70%{opacity:1} 88%{opacity:0.91}
         }
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+        @keyframes riskPulse{0%,100%{opacity:1}50%{opacity:0.7}}
+        @keyframes dustDrift{0%{transform:translateX(0)}100%{transform:translateX(40px)}}
+        @keyframes actionPress{0%,100%{transform:none}50%{transform:scale(0.97) translateY(1px)}}
 
-        /* deep rock texture */
-        .sim-root::before {
-          content: '';
-          position: absolute; inset: 0;
-          background-image:
-            repeating-linear-gradient(165deg, transparent, transparent 60px, rgba(80,56,28,0.06) 60px, rgba(80,56,28,0.06) 61px),
-            repeating-linear-gradient(82deg,  transparent, transparent 90px, rgba(55,36,14,0.04) 90px, rgba(55,36,14,0.04) 91px);
-          pointer-events: none; z-index: 0;
-        }
-
-        /* vignette */
-        .sim-root::after {
-          content: '';
-          position: absolute; inset: 0;
-          background: radial-gradient(ellipse at 50% 40%, transparent 35%, rgba(0,0,0,0.72) 100%);
-          pointer-events: none; z-index: 0;
-        }
-
-        /* scanline */
-        @keyframes scan { 0% { top: -8%; } 100% { top: 108%; } }
-        .scanline {
-          position: absolute; left: 0; right: 0; height: 55px;
-          background: linear-gradient(transparent, rgba(255,255,255,0.012), transparent);
-          animation: scan 10s linear infinite;
-          pointer-events: none; z-index: 50;
-        }
-
-        /* shared animations */
-        @keyframes pulseRing {
-          0%,100% { box-shadow: 0 0 0 0 var(--pulse-color); }
-          50%      { box-shadow: 0 0 0 10px transparent; }
-        }
-        @keyframes flashText { 0%,100%{opacity:1} 50%{opacity:0.4} }
-        @keyframes shimmer   { 0%{left:-80px} 100%{left:calc(100% + 80px)} }
-        @keyframes blink     { 0%,90%,100%{opacity:1} 95%{opacity:0.2} }
-
-        /* ── layout ── */
-        .sim-layout {
-          position: relative; z-index: 1;
-          display: grid;
-          grid-template-columns: 220px 1fr 260px;
-          grid-template-rows: 56px 1fr 110px;
-          gap: 3px;
-          padding: 3px;
-          height: 100vh;
-        }
-
-        /* ── panel base ── */
-        .rp {
+        .action-btn {
+          background: linear-gradient(180deg, ${SEAM} 0%, ${STONE} 100%);
+          border-top: 1px solid ${DUST};
+          border-left: 1px solid ${DUST};
+          border-right: 1px solid #0a0806;
+          border-bottom: 2px solid #0a0806;
+          color: ${AMBER};
+          padding: 9px 16px;
+          font-family: 'Share Tech Mono', monospace;
+          font-size: 10px; letter-spacing: 0.18em;
+          cursor: pointer; transition: all 0.12s;
           position: relative; overflow: hidden;
-          background: #100d0a;
-          border: 1px solid #302010;
         }
-        .rp::before {
-          content: '';
-          position: absolute; inset: 0;
-          background-image:
-            repeating-linear-gradient(158deg, transparent, transparent 38px, rgba(80,56,28,0.055) 38px, rgba(80,56,28,0.055) 39px),
-            repeating-linear-gradient(75deg,  transparent, transparent 55px, rgba(55,36,14,0.04)  55px, rgba(55,36,14,0.04)  56px);
-          pointer-events: none; z-index: 0;
+        .action-btn::before {
+          content:''; position:absolute; inset:0;
+          background: linear-gradient(180deg, rgba(201,135,42,0.08) 0%, transparent 100%);
+          opacity:0; transition:opacity 0.15s;
         }
-        /* amber vein top */
-        .rp::after {
-          content: '';
-          position: absolute; top: 0; left: 0; right: 0; height: 2px;
-          background: linear-gradient(90deg, transparent, #c8901855 35%, #c8901899 50%, #c8901855 65%, transparent);
-          z-index: 2;
-        }
-        .rp > * { position: relative; z-index: 1; }
+        .action-btn:hover { color:${AMBER2}; border-top-color:${AMBER}55; }
+        .action-btn:hover::before { opacity:1; }
+        .action-btn:active { animation:actionPress 0.12s ease; border-bottom-width:1px; }
 
-        /* ── panel section label ── */
-        .sec-label {
-          font-family: 'Share Tech Mono', monospace;
-          font-size: 8px;
-          letter-spacing: 3px;
-          color: rgba(155,118,52,0.48);
-          padding: 8px 12px 4px;
-          border-bottom: 1px solid #2a1a08;
-          flex-shrink: 0;
+        .sensor-panel {
+          background: linear-gradient(160deg, ${STONE} 0%, #100d0a 100%);
+          border: 1px solid ${SEAM};
+          border-top: 2px solid ${DUST};
+          position: relative; overflow: hidden;
+          padding: 16px 20px;
+        }
+        .sensor-panel::before {
+          content:'';position:absolute;top:0;left:0;right:0;height:1px;
+          background:linear-gradient(90deg,transparent,${AMBER}44,transparent);
         }
 
-        /* ── header ── */
-        .sim-header {
-          grid-column: 1 / -1;
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 0 18px;
-          background: #0a0806;
-          border-bottom: 2px solid #3a2410;
-        }
-        .sim-header::after { display: none; }
-
-        .h-brand {
-          display: flex; align-items: center; gap: 12px;
-        }
-        .h-title {
-          font-family: 'Share Tech Mono', monospace;
-          font-size: 16px; letter-spacing: 4px; color: #c8a040; line-height: 1;
-        }
-        .h-sub {
-          font-size: 8px; letter-spacing: 3px; color: rgba(140,100,44,0.5); margin-top: 3px;
-        }
-        .h-center {
-          display: flex; align-items: center; gap: 20px;
-        }
-        .h-stat {
-          display: flex; flex-direction: column; align-items: center; gap: 2px;
-        }
-        .h-stat-label { font-size: 8px; letter-spacing: 2px; color: rgba(155,118,52,0.5); font-family: 'Share Tech Mono', monospace; }
-        .h-stat-value { font-size: 13px; font-family: 'Share Tech Mono', monospace; font-weight: 700; }
-        .h-sep { width: 1px; height: 28px; background: rgba(80,56,28,0.35); }
-
-        @keyframes pulseDot {
-          0%,100% { box-shadow: 0 0 0 0 var(--dc); }
-          50%      { box-shadow: 0 0 0 7px transparent; }
-        }
-        .status-pill {
-          display: flex; align-items: center; gap: 8px;
-          font-family: 'Share Tech Mono', monospace;
-          font-size: 11px; letter-spacing: 2px;
-          padding: 5px 12px;
-          border-radius: 2px;
-          border: 1px solid;
-          transition: all 0.4s;
-        }
-        .status-dot {
-          width: 8px; height: 8px; border-radius: 50%;
-          animation: pulseDot 2s infinite;
-        }
-        .h-clock { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: rgba(155,118,52,0.5); letter-spacing: 2px; }
-
-        /* ── left column ── */
-        .left-col {
-          grid-row: 2/ 4;
-          display: flex; flex-direction: column; gap: 8px;
+        .risk-badge {
+          display:inline-flex; align-items:center; gap:8px;
+          border:1px solid currentColor; padding:6px 14px;
+          letter-spacing:0.2em; font-size:11px;
         }
 
-        .gauge-panel {
-          flex-shrink: 0;
-          display: flex; flex-direction: column;
+        .section-label {
+          font-size:8px; letter-spacing:0.4em;
+          color:${AMBER}55; margin-bottom:8px;
+          border-bottom:1px solid ${SEAM}; padding-bottom:4px;
         }
-        .gauge-row {
-          display: flex; justify-content: space-around; align-items: center;
-          padding: 8px 6px 12px;
-          gap: 1px;
-        }
-
-        .vu-panel {
-          flex: 1;
-          display: flex; flex-direction: column;
-        }
-        .vu-meters {
-          flex: 1;
-          display: flex; align-items: flex-end; justify-content: space-around;
-          padding: 10px 12px 12px;
-          gap: 8px;
-        }
-        .vu-col {
-          display: flex; flex-direction: column; align-items: center; gap: 6px;
-          flex: 1;
-        }
-        .vu-col-label {
-          font-size: 7px; letter-spacing: 1px; color: rgba(155,118,52,0.5);
-          font-family: 'Share Tech Mono', monospace; text-align: center;
-        }
-
-        /* ── center column ── */
-        .center-col {
-          grid-row: 2 / 3;
-          display: flex; flex-direction: column;
-        }
-        .map-body {
-          flex: 1; display: flex; align-items: center; justify-content: center;
-          padding: 10px; min-height: 0;
-        }
-
-        /* ── right column ── */
-        .right-col {
-          grid-row: 2 / 4;
-          display: flex; flex-direction: column; gap: 3px;
-        }
-
-        .risk-panel {
-          flex-shrink: 0;
-          display: flex; flex-direction: column; align-items: center;
-          padding: 14px 12px 10px; gap: 10px;
-        }
-
-        .pred-panel {
-          flex-shrink: 0;
-          padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
-        }
-
-        .alerts-panel {
-          flex: 1; display: flex; flex-direction: column; min-height: 0;
-        }
-        .alerts-body {
-          flex: 1; overflow-y: auto; padding: 8px; min-height: 0;
-        }
-        .alerts-body::-webkit-scrollbar { width: 3px; }
-        .alerts-body::-webkit-scrollbar-track { background: #0a0806; }
-        .alerts-body::-webkit-scrollbar-thumb { background: #3a2410; border-radius: 2px; }
-
-        /* ── bottom strip ── */
-        .bottom-strip {
-          grid-column: 1 / 3;
-          display: flex; flex-direction: column; justify-content: center;
-          padding: 8px 14px; gap: 6px;
-        }
-        .waveform-row {
-          display: flex; gap: 20px; align-items: flex-start;
-        }
-
-        .ctrl-strip {
-          grid-column: 3;
-          display: flex; flex-direction: column; gap: 3px;
-        }
-        .ctrl-buttons {
-          flex: 1; display: flex; flex-wrap: wrap;
-          gap: 4px; padding: 8px;
-          align-content: flex-start;
-        }
-        .ctrl-btn {
-          flex: 1; min-width: 80px;
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(80,56,28,0.4);
-          color: rgba(200,175,130,0.7);
-          font-family: 'Share Tech Mono', monospace;
-          font-size: 8px; letter-spacing: 1px;
-          padding: 8px 4px; cursor: pointer;
-          border-radius: 2px; text-align: center;
-          transition: all 0.15s;
-        }
-        .ctrl-btn:hover {
-          background: rgba(200,145,26,0.1);
-          border-color: rgba(200,145,26,0.5);
-          color: #c8901a;
-        }
-        .ctrl-btn:active { transform: scale(0.97); }
-        .ctrl-btn.active {
-          background: rgba(74,222,128,0.1);
-          border-color: rgba(74,222,128,0.5);
-          color: #4ade80;
-        }
-
-        /* divider */
-        .vdiv { width: 1px; background: rgba(80,56,28,0.3); align-self: stretch; margin: 0 4px; }
       `}</style>
 
-      <div className="sim-root">
-        <div className="scanline" />
+      <RockOverlay />
 
-        <div className="sim-layout">
+      {/* Lantern ambient glow — top */}
+      <div style={{
+        position: "fixed", top: -80, left: "50%", transform: "translateX(-50%)",
+        width: 600, height: 200, borderRadius: "50%",
+        background: `radial-gradient(ellipse,${AMBER}18 0%,transparent 70%)`,
+        pointerEvents: "none", zIndex: 2,
+        animation: "lanternFlicker 6s ease-in-out infinite",
+      }} />
 
-          {/* ══════════════════════════════════════════════
-              HEADER
-              ══════════════════════════════════════════════ */}
-          <div className="rp sim-header">
-            <div className="h-brand">
-              {/* logo mark */}
-              <svg width="32" height="32" viewBox="0 0 32 32">
-                <polygon points="16,2 30,28 2,28" fill="none" stroke="#4a3214" strokeWidth="1.2" />
-                <polygon points="16,8 26,26 6,26" fill="#160f08" />
-                <circle cx="16" cy="20" r="5.5" fill="none" stroke="#c8901a" strokeWidth="1.5" />
-                <line x1="16" y1="8" x2="16" y2="14.5" stroke="#c8901a" strokeWidth="1.5" />
-                <circle cx="16" cy="6.5" r="2" fill="#f87171">
-                  <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" />
-                </circle>
-              </svg>
+      {/* ══ TOP BAR ══ */}
+      <div style={{
+        background: `linear-gradient(180deg,#110e0b 0%,${COAL} 100%)`,
+        borderBottom: `1px solid ${SEAM}`,
+        padding: "12px 28px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        position: "relative", zIndex: 10,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {/* Pickaxe glyph */}
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <path d="M4 24 L18 10" stroke={AMBER} strokeWidth="2" strokeLinecap="round"/>
+            <path d="M18 10 L24 4 L22 8 L26 6 L20 12 L24 16 L18 10Z" fill={AMBER} opacity="0.8"/>
+            <circle cx="4" cy="24" r="2" fill={AMBER} opacity="0.6"/>
+          </svg>
+          <div>
+            <div style={{
+              fontFamily: "'Teko',sans-serif", fontSize: 22, fontWeight: 500,
+              color: AMBER2, letterSpacing: "0.08em", lineHeight: 1,
+              textShadow: `0 0 20px ${AMBER}55`,
+            }}>
+              SHAFT CONTROL
+            </div>
+            <div style={{ fontSize: 8, letterSpacing: "0.35em", color: `${AMBER}44` }}>
+              UNDERGROUND SAFETY SIMULATOR
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+          {/* Depth indicator */}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 8, letterSpacing: "0.3em", color: `${AMBER}44` }}>DEPTH</div>
+            <div style={{ fontSize: 16, color: AMBER, fontFamily: "'Teko'", letterSpacing: "0.05em" }}>−200 m</div>
+          </div>
+          <div style={{ width: 1, height: 32, background: SEAM }} />
+          {/* Clock */}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 8, letterSpacing: "0.3em", color: `${AMBER}44` }}>SHIFT TIME</div>
+            <div style={{ fontSize: 16, color: AMBER2, letterSpacing: "0.08em" }}>{clock}</div>
+          </div>
+          <div style={{ width: 1, height: 32, background: SEAM }} />
+          {/* Risk badge */}
+          <div
+            className="risk-badge"
+            style={{
+              color: t.primary,
+              borderColor: `${t.primary}66`,
+              background: t.dim,
+              animation: level !== "safe" ? "riskPulse 2s infinite" : "none",
+            }}
+          >
+            <span style={{ fontSize: 14 }}>{t.glyph}</span>
+            <span style={{ fontFamily: "'Teko'", fontSize: 16, fontWeight: 500, letterSpacing: "0.15em" }}>
+              {t.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ══ MAIN CONTENT ══ */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "300px 1fr 240px",
+        gap: 0, height: "calc(100vh - 60px)",
+        position: "relative", zIndex: 5,
+      }}>
+
+        {/* ── LEFT PANEL: Sensors + Actions ── */}
+        <div style={{
+          borderRight: `1px solid ${SEAM}`,
+          display: "flex", flexDirection: "column",
+          background: `linear-gradient(180deg,${STONE}88 0%,${COAL}88 100%)`,
+          overflow: "hidden",
+        }}>
+          {/* Strata lines decorative */}
+          <div style={{ position: "absolute", left: 0, width: 300, top: 0, bottom: 0, pointerEvents: "none" }}>
+            <StrataLine y="160" opacity={0.4} />
+            <StrataLine y="320" opacity={0.3} />
+            <StrataLine y="480" opacity={0.25} />
+          </div>
+
+          {/* ── Sensor readings ── */}
+          <div className="sensor-panel" style={{ flex: "0 0 auto" }}>
+            <div className="section-label">▸ SENSOR ARRAY // LIVE</div>
+            <div style={{
+              display: "flex",
+              justifyContent: "space-around",
+              alignItems: "flex-start",
+              padding: "8px 0 4px",
+              gap: 8,
+            }}>
+              <GaugeArc
+                value={data.methane}
+                max={5}
+                unit="%"
+                label="METHANE"
+                color="#6DBB7A"
+                warn={2}
+                danger={4}
+              />
+              <div style={{ width: 1, height: 100, background: SEAM, alignSelf: "center" }} />
+              <GaugeArc
+                value={data.oxygen}
+                max={22}
+                unit="%"
+                label="OXYGEN"
+                color={AMBER2}
+                warn={19}
+                danger={17}
+              />
+              <div style={{ width: 1, height: 100, background: SEAM, alignSelf: "center" }} />
+              <GaugeArc
+                value={data.temperature}
+                max={60}
+                unit="°C"
+                label="TEMPERATURE"
+                color="#D95F3B"
+                warn={35}
+                danger={45}
+              />
+            </div>
+          </div>
+
+          {/* Risk score */}
+          <div className="sensor-panel" style={{ flex: "0 0 auto", marginTop: 1 }}>
+            <div className="section-label">▸ RISK ASSESSMENT</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
-                <div className="h-title">CONTROL ROOM — BEFORE IT HAPPENS</div>
-                <div className="h-sub">DEEP MINE PREDICTIVE SAFETY SIMULATOR · v2.4.1 · ACTIVE SESSION</div>
+                <div style={{ fontSize: 8, color: `${AMBER}44`, letterSpacing: "0.2em", marginBottom: 4 }}>
+                  COMPOSITE SCORE
+                </div>
+                <div style={{
+                  fontFamily: "'Teko'", fontSize: 44, fontWeight: 500,
+                  color: t.primary, lineHeight: 1,
+                  textShadow: `0 0 20px ${t.primary}66`,
+                }}>
+                  {score}
+                </div>
+                <div style={{ fontSize: 8, color: `${t.primary}88`, letterSpacing: "0.2em" }}>/100</div>
+              </div>
+              {/* Score bar */}
+              <div style={{ flex: 1, marginLeft: 20 }}>
+                <div style={{
+                  height: 6, background: SEAM, borderRadius: 1, overflow: "hidden",
+                  marginBottom: 8, position: "relative",
+                }}>
+                  <div style={{
+                    position: "absolute", left: 0, top: 0, bottom: 0,
+                    width: `${score}%`,
+                    background: `linear-gradient(90deg,#6DBB7A,${score > 60 ? "#E8A83E" : "#6DBB7A"},${score > 80 ? "#C0392B" : "transparent"})`,
+                    transition: "width 0.8s ease",
+                    boxShadow: `0 0 8px ${t.primary}88`,
+                  }} />
+                </div>
+                <div style={{
+                  fontSize: 9, color: `${t.primary}cc`, letterSpacing: "0.1em",
+                  lineHeight: 1.4, maxWidth: 120,
+                }}>
+                  {prediction.message}
+                </div>
               </div>
             </div>
+          </div>
 
-            {/* live sensor summary */}
-            <div className="h-center">
-              {[
-                { label: "CH₄", value: fmt2(data.methane) + "%",  color: data.methane > 1.5 ? "#f87171" : data.methane > 0.8 ? "#facc15" : "#4ade80" },
-                { label: "O₂",  value: fmt2(data.oxygen)  + "%",  color: data.oxygen < 19.5  ? "#f87171" : data.oxygen < 20.5  ? "#facc15" : "#60a5fa" },
-                { label: "TEMP",value: fmt1(data.temperature) + "°C", color: data.temperature > 38 ? "#f87171" : data.temperature > 32 ? "#facc15" : "#4ade80" },
-              ].map((s, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: i > 0 ? "0" : "0" }}>
-                  {i > 0 && <div className="vdiv" />}
-                  <div className="h-stat" style={{ padding: "0 12px" }}>
-                    <span className="h-stat-label">{s.label}</span>
-                    <span className="h-stat-value" style={{ color: s.color }}>{s.value}</span>
-                  </div>
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Action buttons */}
+          <div style={{
+            padding: "16px", borderTop: `1px solid ${SEAM}`,
+            background: `linear-gradient(0deg,${STONE} 0%,transparent 100%)`,
+          }}>
+            <div className="section-label">▸ EMERGENCY CONTROLS</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              {ACTIONS.map((btn) => (
+                <button key={btn} className="action-btn" onClick={() => handleAction(btn)}>
+                  {btn}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── CENTER: Mine Map ── */}
+        <div style={{
+          display: "flex", flexDirection: "column",
+          background: `linear-gradient(160deg,#0e0c09 0%,${COAL} 100%)`,
+          overflow: "hidden", position: "relative",
+        }}>
+          {/* Coal dust drift overlay */}
+          <div style={{
+            position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2,
+            backgroundImage: `
+              radial-gradient(ellipse at 20% 80%, rgba(42,30,16,0.3) 0%, transparent 60%),
+              radial-gradient(ellipse at 80% 20%, rgba(26,20,16,0.25) 0%, transparent 50%)
+            `,
+          }} />
+
+          <div style={{
+            padding: "14px 20px 8px", borderBottom: `1px solid ${SEAM}`,
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <div className="section-label" style={{ margin: 0 }}>▸ MINE LAYOUT // SECTOR 7</div>
+            <div style={{ display: "flex", gap: 12, fontSize: 8, color: `${AMBER}44`, letterSpacing: "0.15em" }}>
+              {Object.entries(zones).map(([zone, status]) => (
+                <span key={zone} style={{ color: RISK_THEME[status]?.primary || AMBER }}>
+                  {zone}: {status.toUpperCase()}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ flex: 1, padding: "16px", position: "relative", zIndex: 3 }}>
+            <MineMap zones={zones} />
+          </div>
+        </div>
+
+        {/* ── RIGHT PANEL: Alerts ── */}
+        <div style={{
+          borderLeft: `1px solid ${SEAM}`,
+          display: "flex", flexDirection: "column",
+          background: `linear-gradient(180deg,${STONE}88 0%,${COAL}88 100%)`,
+          overflow: "hidden",
+        }}>
+          <div style={{
+            padding: "14px 16px 10px",
+            borderBottom: `1px solid ${SEAM}`,
+          }}>
+            <div className="section-label" style={{ marginBottom: 4 }}>▸ INCIDENT FEED</div>
+            <div style={{ fontSize: 8, color: `${AMBER}33`, letterSpacing: "0.2em" }}>
+              {alerts.length === 0 ? "NO ACTIVE EVENTS" : `${alerts.length} ACTIVE`}
+            </div>
+          </div>
+          <div style={{ flex: 1, padding: "12px", overflow: "hidden" }}>
+            <AlertsFeed externalAlerts={alerts} />
+          </div>
+
+          {/* Bottom status strip */}
+          <div style={{
+            padding: "10px 16px", borderTop: `1px solid ${SEAM}`,
+            background: STONE, fontSize: 8, color: `${AMBER}33`,
+            letterSpacing: "0.2em",
+          }}>
+            <div style={{ marginBottom: 3 }}>UPLINK: STABLE</div>
+            <div>FIBER DEPTH: −205m</div>
+            <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
+              {["A", "B", "C"].map((z) => (
+                <div
+                  key={z}
+                  style={{
+                    flex: 1, textAlign: "center", padding: "3px 0",
+                    background: RISK_THEME[zones[z]]?.dim || "transparent",
+                    border: `1px solid ${RISK_THEME[zones[z]]?.primary || SEAM}44`,
+                    color: RISK_THEME[zones[z]]?.primary || AMBER,
+                    fontSize: 9,
+                  }}
+                >
+                  Z{z}
                 </div>
               ))}
             </div>
-
-            {/* status + clock */}
-            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-              <div
-                className="status-pill"
-                style={{
-                  color: t.primary,
-                  borderColor: `${t.primary}55`,
-                  background: t.dim,
-                  "--dc": t.pulse,
-                }}
-              >
-                <div className="status-dot" style={{ background: t.primary, "--dc": t.pulse }} />
-                {t.label}
-              </div>
-              <div className="h-clock">{clock || "--:--:--"}</div>
-            </div>
           </div>
-
-          {/* ══════════════════════════════════════════════
-              LEFT — GAUGES + VU METERS
-              ══════════════════════════════════════════════ */}
-          <div className="left-col">
-
-            {/* dial gauges */}
-            <div className="rp gauge-panel">
-              <div className="sec-label">◈ SENSOR GAUGES</div>
-              <div className="gauge-row">
-                <DialGauge value={data.methane}     max={5}   label="METHANE"  unit="%"  color={data.methane > 1.5 ? "#f87171" : data.methane > 0.8 ? "#facc15" : "#4ade80"} size={80} />
-                <DialGauge value={data.oxygen}      max={21}  label="OXYGEN"   unit="%"  color={data.oxygen < 19.5 ? "#f87171" : "#60a5fa"}  size={80} />
-                <DialGauge value={data.temperature} max={60}  label="TEMP"     unit="°C" color={data.temperature > 38 ? "#f87171" : data.temperature > 30 ? "#facc15" : "#4ade80"} size={80} />
-              </div>
-            </div>
-
-            {/* VU bar meters */}
-            <div className="rp vu-panel">
-              <div className="sec-label">◈ LEVEL METERS</div>
-              <div className="vu-meters">
-                {[
-                  { label: "CH₄",  value: data.methane,     max: 5,  color: "#f87171" },
-                  { label: "O₂",   value: 21 - data.oxygen, max: 3,  color: "#60a5fa" },
-                  { label: "TEMP", value: data.temperature, max: 60, color: "#facc15" },
-                  { label: "RISK", value: score,            max: 100, color: t.primary },
-                ].map((m, i) => (
-                  <div key={i} className="vu-col">
-                    <div style={{ flex: 1, display: "flex", alignItems: "flex-end", height: "120px" }}>
-                      <VuBar value={m.value} max={m.max} color={m.color} vertical segments={16} />
-                    </div>
-                    <div className="vu-col-label">{m.label}</div>
-                    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: m.color }}>
-                      {fmt1(m.value)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
-          {/* ══════════════════════════════════════════════
-              CENTER — MINE MAP
-              ══════════════════════════════════════════════ */}
-          <div className="rp center-col">
-            <div className="sec-label">◈ MINE SCHEMATIC — LIVE ZONE STATUS</div>
-            <div className="map-body">
-              <MineMap zones={zones} />
-            </div>
-          </div>
-
-          {/* ══════════════════════════════════════════════
-              RIGHT — RISK RING + PREDICTION + ALERTS
-              ══════════════════════════════════════════════ */}
-          <div className="right-col">
-
-            {/* risk ring */}
-            <div className="rp risk-panel">
-              <div className="sec-label" style={{ alignSelf: "stretch" }}>◈ RISK ENGINE</div>
-              <RiskRing score={score} level={level} />
-              {/* score bar */}
-              <div style={{ width: "100%" }}>
-                <VuBar value={score} max={100} color={t.primary} segments={20} />
-              </div>
-            </div>
-
-            {/* prediction */}
-            <div className="rp pred-panel">
-              <div className="sec-label" style={{ margin: "-10px -12px 6px", padding: "8px 12px 4px" }}>◈ PREDICTION</div>
-              <PredictionStrip prediction={prediction} level={level} />
-            </div>
-
-            {/* alerts */}
-            <div className="rp alerts-panel">
-              <div className="sec-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <div style={{
-                  width: 6, height: 6, borderRadius: "50%", background: "#f87171",
-                  animation: "blink 1.1s infinite",
-                }} />
-                ALERT FEED
-              </div>
-              <div className="alerts-body">
-                <AlertsFeed externalAlerts={alerts} />
-              </div>
-            </div>
-
-          </div>
-
-          {/* ══════════════════════════════════════════════
-              BOTTOM — WAVEFORMS
-              ══════════════════════════════════════════════ */}
-          <div className="rp bottom-strip">
-            <div className="sec-label" style={{ margin: "-8px -14px 6px", padding: "6px 14px 4px" }}>◈ SENSOR HISTORY</div>
-            <div className="waveform-row">
-              <Waveform history={metHistory.methane}     color="#f87171" height={44} label="METHANE %" />
-              <Waveform history={metHistory.oxygen}      color="#60a5fa" height={44} label="OXYGEN %" />
-              <Waveform history={metHistory.temperature} color="#facc15" height={44} label="TEMPERATURE °C" />
-            </div>
-          </div>
-
-          {/* ══════════════════════════════════════════════
-              BOTTOM RIGHT — CONTROL BUTTONS
-              ══════════════════════════════════════════════ */}
-          <div className="rp ctrl-strip">
-            <div className="sec-label">◈ CONTROLS</div>
-            <div className="ctrl-buttons">
-              {[
-                "VENTILATION",
-                "EVAC ALARM",
-                "LOCK SHAFT",
-                "COMM LINK",
-                "DEPLOY CREW",
-                "FLUSH GAS",
-              ].map((btn) => (
-                <button key={btn} className="ctrl-btn">{btn}</button>
-              ))}
-            </div>
-          </div>
-
         </div>
       </div>
-    </>
+    </div>
   );
 }

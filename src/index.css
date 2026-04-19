@@ -1,6 +1,10 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Train+One&display=swap');
 
 @theme {
   --color-accent-orange: #FF8C00;
   --color-accent-yellow: #F9D71C;
+
+   --font-train: "Train One", system-ui;
 }
+
