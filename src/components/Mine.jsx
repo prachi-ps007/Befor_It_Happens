@@ -1,6 +1,6 @@
-// src/components/MINEMAP.jsx
 
-export default function MineMap({ zones }) {
+
+export default function Mine({ zones }) {
   // zones = { A: "safe", B: "warning", C: "danger" }
 
   const palette = {

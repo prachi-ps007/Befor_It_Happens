@@ -92,7 +92,7 @@ export default function MinerDetailModal({ miner, onClose }) {
       onClick={e => { if(e.target === e.currentTarget) onClose(); }}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+       
         @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
         @keyframes borderPulse{0%,100%{box-shadow:0 0 8px ${G}22}50%{box-shadow:0 0 24px ${G}44}}
         @keyframes scanH{0%{top:-5%}100%{top:105%}}

@@ -1,7 +1,7 @@
 // src/pages/Simulator.jsx
 
 import { useEffect, useRef, useState } from "react";
-import MineMap from "../components/MINEMAP";
+import Mine from "../components/Mine";
 import AlertsFeed from "../components/AlertsFeed";
 import useSimulation from "../hooks/useSimulation";
 import {
@@ -208,7 +208,6 @@ export default function Simulator() {
       position: "relative", overflow: "hidden",
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Teko:wght@300;400;500&display=swap');
 
         ::-webkit-scrollbar { width:4px; background:${COAL}; }
         ::-webkit-scrollbar-thumb { background:${SEAM}; }
@@ -493,7 +492,7 @@ export default function Simulator() {
           </div>
 
           <div style={{ flex: 1, padding: "16px", position: "relative", zIndex: 3 }}>
-            <MineMap zones={zones} />
+            <Mine zones={zones} />
           </div>
         </div>
 

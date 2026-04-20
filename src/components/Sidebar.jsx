@@ -63,7 +63,7 @@ const navItems = [
 ];
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap');
+
 
   .sidebar-root {
     width: 220px;

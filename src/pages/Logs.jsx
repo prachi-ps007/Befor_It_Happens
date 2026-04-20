@@ -123,7 +123,7 @@ export default function Logs() {
 
       {/* Google Font load */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,300&family=Share+Tech+Mono&display=swap');
+       
 
         .reg-select {
           background: #0d0b08;

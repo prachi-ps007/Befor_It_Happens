@@ -45,7 +45,7 @@ export default function AlertsFeed({ externalAlerts = [] }) {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Teko:wght@300;400&display=swap');
+      
 
         .af-wrap {
           height: 100%;

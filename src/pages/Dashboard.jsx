@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import MineMap from "../components/MINEMAP";
+import Mine from "../components/Mine";
 import AlertsFeed from "../components/AlertsFeed";
 import { getSimulations } from "../services/firestore";
 
@@ -9,7 +9,7 @@ import { getSimulations } from "../services/firestore";
 ═══════════════════════════════════════════════════ */
 
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@500;700&display=swap');
+  
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -333,7 +333,7 @@ export default function Dashboard() {
           <div className="rp c7 r3 map-panel">
             <div className="panel-head">MINE MAP — SHAFT GRID</div>
             <div className="map-body">
-              <MineMap zones={zones} />
+              <Mine zones={zones} />
             </div>
           </div>
 

@@ -65,7 +65,7 @@ export default function Personnel() {
       position:"relative", overflow:"hidden",
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+     
         * { box-sizing: border-box; }
         @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
         @keyframes scanH{0%{top:-4%}100%{top:104%}}
