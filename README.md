@@ -107,4 +107,4 @@ Mobile app version
 Multi-user collaborative monitoring
 🎬 Demo
 
-(Add your demo video link here after recording)
+https://drive.google.com/file/d/1PPTypoYoOXSYJO-ci3KsM1RZCziofyDp/view?usp=drive_link
