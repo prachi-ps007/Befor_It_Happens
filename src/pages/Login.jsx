@@ -9,12 +9,24 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    console.log("CLICKED");
+const handleLogin = async (e) => {
+  e.preventDefault();
+
+  try {
     await signInWithEmailAndPassword(auth, email, password);
     navigate("/simulator");
-  };
+  } catch (error) {
+    console.error(error.code);
+
+    if (error.code === "auth/user-not-found") {
+      alert("No account found. Please sign up.");
+    } else if (error.code === "auth/wrong-password") {
+      alert("Incorrect password.");
+    } else {
+      alert("Login failed.");
+    }
+  }
+};
 
   return (
   <div className="flex h-screen items-center justify-center bg-[#121212] text-white">

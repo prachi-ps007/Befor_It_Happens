@@ -3,23 +3,22 @@ const normalize = (value, min, max) => {
   return Math.max(0, Math.min(1, (value - min) / (max - min)));
 };
 
-// 🔥 1. Risk Score (0–100)
 export function calculateRiskScore({ methane, oxygen, temperature }) {
   // Normalize each factor
-  const ch4 = normalize(methane, 0, 10);       // higher = worse
-  const o2 = normalize(21 - oxygen, 0, 6);     // lower oxygen = worse
-  const temp = normalize(temperature, 20, 60); // higher = worse
+  const ch4 = normalize(methane, 0, 10);       
+  const o2 = normalize(21 - oxygen, 0, 6);    
+  const temp = normalize(temperature, 20, 60); 
 
   // Weighted formula
   const score =
-    ch4 * 0.5 +   // methane is most dangerous
-    o2 * 0.3 +    // oxygen next
-    temp * 0.2;   // temperature
+    ch4 * 0.5 +   
+    o2 * 0.3 +  
+    temp * 0.2;   
 
   return Math.round(score * 100);
 }
 
-// 🔥 2. Risk Level
+
 export function getRiskLevel(score) {
   if (score >= 70) return "danger";
   if (score >= 40) return "warning";

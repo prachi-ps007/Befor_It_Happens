@@ -15,7 +15,7 @@ export default function Signup() {
       alert("Account created!");
       navigate("/");
     } catch (err) {
-      alert(err.message);
+      alert("Email already exists. Please login.");
     }
   };
 
