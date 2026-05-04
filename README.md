@@ -7,28 +7,37 @@ Mining environments are highly dangerous, where small failures can lead to major
 We simulate industrial conditions and use AI models to detect risk patterns and generate early warnings.
 
 ## 📊 Dashboard
-![Dashboard](assets/dashboard.png)
+The dashboard provides a real-time overview of system conditions and risk levels.
+
+![Dashboard](src/assets/dashboard.png)
 
 ---
 
 ## ⚙️ Simulation
-![Simulation](assets/simulation.png)
-The simulation module predicts potential failures based on sensor inputs and system conditions.
+The simulation predicts potential failures based on sensor inputs.
+
+![Simulation](src/assets/simulation.png)
 
 ---
 
 ## 📜 Logs & Monitoring
-![Logs](assets/logs.png)
+Logs help track system behavior and detect anomalies.
+
+![Logs](src/assets/logs.png)
 
 ---
 
 ## 👷 Personnel Management
-![Personnel](assets/personnel.png)
+Manages worker data and safety status.
+
+![Personnel](src/assets/personnel.png)
 
 ---
 
 ## 📋 Safety Protocols
-![Protocols](assets/protocols.png)
+Displays recommended actions during high-risk scenarios.
+
+![Protocols](src/assets/protocols.png)
 
 ### Predict risks before they turn into disasters.
 
