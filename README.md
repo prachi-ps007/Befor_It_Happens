@@ -1,4 +1,35 @@
 # 🚀 Before It Happens
+# 🚀 Predictive Mining Simulation Project
+## 🎯 Problem Statement
+Mining environments are highly dangerous, where small failures can lead to major accidents. This project uses AI to predict potential failures early and improve safety.
+
+## 💡 Solution
+We simulate industrial conditions and use AI models to detect risk patterns and generate early warnings.
+
+## 📊 Dashboard
+![Dashboard](assets/dashboard.png)
+
+---
+
+## ⚙️ Simulation
+![Simulation](assets/simulation.png)
+The simulation module predicts potential failures based on sensor inputs and system conditions.
+
+---
+
+## 📜 Logs & Monitoring
+![Logs](assets/logs.png)
+
+---
+
+## 👷 Personnel Management
+![Personnel](assets/personnel.png)
+
+---
+
+## 📋 Safety Protocols
+![Protocols](assets/protocols.png)
+
 ### Predict risks before they turn into disasters.
 
 A **predictive safety simulation system** that models hazardous environments and shows how *delayed human response increases risk in real time*.
